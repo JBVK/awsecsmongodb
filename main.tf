@@ -11,7 +11,7 @@ terraform {
 }
 
 provider "aws" {
-  region = "eu-west-1"
+  region = "eu-central-1"
 }
 
 data "aws_availability_zones" "available" {}
@@ -203,30 +203,6 @@ resource "aws_cloudwatch_log_group" "ecs_logs" {
   retention_in_days = 30
 }
 
-resource "aws_iam_policy" "ecs_logging" {
-  name        = "ecs_logging_policy"
-  description = "Allow ECS tasks to send logs to CloudWatch"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = [
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ],
-        Resource = "arn:aws:logs:*:*:*",
-        Effect   = "Allow"
-      },
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_mongo_logs" {
-  role       = aws_iam_role.ecs_mongo_task_execution_role.name
-  policy_arn = aws_iam_policy.ecs_logging.arn
-}
-
 resource "aws_ecs_cluster" "mongolab_cluster" {
   name = "mongolab-cluster"
 }
@@ -286,7 +262,7 @@ resource "aws_ecs_task_definition" "mongo_task_definition" {
         logDriver = "awslogs"
         options = {
           awslogs-group         = aws_cloudwatch_log_group.ecs_logs.name
-          awslogs-region        = "eu-west-1"
+          awslogs-region        = "eu-central-1"
           awslogs-stream-prefix = "mongodb"
         }
       }
@@ -331,7 +307,7 @@ resource "aws_service_discovery_service" "mongo_discovery_service" {
 resource "aws_ecs_service" "mongo_service" {
   name            = "mongolab-mongodb-service"
   cluster         = aws_ecs_cluster.mongolab_cluster.id
-  task_definition = "${aws_ecs_task_definition.mongo_task_definition.id}:2"
+  task_definition = aws_ecs_task_definition.mongo_task_definition.id
   desired_count   = 1
   launch_type     = "FARGATE"
 
@@ -354,8 +330,8 @@ resource "aws_key_pair" "ec2_keypair" {
   public_key = file("~/.ssh/mongolab.pub")
 }
 
-resource "aws_instance" "example" {
-  ami           = "ami-074254c177d57d640"
+resource "aws_instance" "mongolab_ec2_instance" {
+  ami           = "ami-01be94ae58414ab2e"
   instance_type = "t2.micro"
   subnet_id     = aws_subnet.subnets[0].id
   key_name      = aws_key_pair.ec2_keypair.key_name
@@ -391,12 +367,6 @@ resource "aws_instance" "example" {
               dnf erase -qy mongodb-mongosh
               dnf install -qy mongodb-mongosh-shared-openssl3
               EOF
-
-  lifecycle {
-    ignore_changes = [
-      security_groups
-    ]
-  }
 }
 
 
