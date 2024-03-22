@@ -16,6 +16,42 @@ provider "aws" {
 
 data "aws_availability_zones" "available" {}
 
+# Parameter store
+
+resource "aws_ssm_parameter" "mongodb_secret_password" {
+  name  = "/mongodb/MONGO_INITDB_ROOT_PASSWORD"
+  type  = "SecureString"
+  value = "Dummy"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_iam_policy" "ssm_parameter_access" {
+  name        = "ssm_parameter_access"
+  description = "Allow ECS tasks to access SSM parameters"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameters",
+          "ssm:GetParameter",
+          "ssm:DescribeParameters",
+          "kms:Decrypt"
+        ]
+        Resource = aws_ssm_parameter.mongodb_secret_password.arn
+      }
+    ]
+  })
+}
+
+# After the code for AWS SSM Paramter Store parameter has been added we must apply the changes to the infrastructure so we are able to change the password.
+# If you are using the example code to deploy the infrastructure, you should comment out everything below here before running terraform init and apply.
+
 # VPC
 resource "aws_vpc" "mongolab_vpc" {
   cidr_block           = "10.0.0.0/16"
@@ -78,6 +114,10 @@ resource "aws_iam_role_policy_attachment" "ecs_mongo_task_execution_role_policy"
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+resource "aws_iam_role_policy_attachment" "ecs_ssm_parameter_access" {
+  role       = aws_iam_role.ecs_mongo_task_execution_role.name
+  policy_arn = aws_iam_policy.ssm_parameter_access.arn
+}
 
 resource "aws_iam_role" "ecs_mongo_task_role" {
   name = "ecs_mongo_task_role"
@@ -243,17 +283,19 @@ resource "aws_ecs_task_definition" "mongo_task_definition" {
           value = "mongolabadmin"
         },
         {
-          name  = "MONGO_INITDB_ROOT_PASSWORD"
-          value = "mongolabpassword"
-        },
-        {
           name  = "MONGO_INITDB_DATABASE"
           value = "mongolab"
         }
       ],
+      secrets = [
+        {
+          name      = "MONGO_INITDB_ROOT_PASSWORD"
+          valueFrom = aws_ssm_parameter.mongodb_secret_password.name
+        }
+      ],
       healthcheck = {
         command     = ["CMD-SHELL", "echo 'db.runCommand(\\\"ping\\\").ok' | mongosh mongodb://localhost:27017/test"]
-        interval    = 5
+        interval    = 30
         timeout     = 15
         retries     = 3
         startPeriod = 15
@@ -326,7 +368,7 @@ resource "aws_ecs_service" "mongo_service" {
 # EC2 instance
 
 resource "aws_key_pair" "ec2_keypair" {
-  key_name   = "examplekey"
+  key_name   = "mongolabkey"
   public_key = file("~/.ssh/mongolab.pub")
 }
 
